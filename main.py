@@ -86,6 +86,9 @@ def parse_args_and_config():
         help="eta used to control the variances of sigma",
     )
     parser.add_argument("--sequence", action="store_true")
+    parser.add_argument("--ckpt_id", type=int, default=500000, help="ckpt id")
+    parser.add_argument("--num_samples", type=int, default=50000, help="Number of generated samples")
+    parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
 
     args = parser.parse_args()
     args.log_path = os.path.join(args.exp, "logs", args.doc)
@@ -213,6 +216,7 @@ def main():
     logging.info("Writing log file to {}".format(args.log_path))
     logging.info("Exp instance id = {}".format(os.getpid()))
     logging.info("Exp comment = {}".format(args.comment))
+    config.sampling.ckpt_id = args.ckpt_id
 
     try:
         runner = Diffusion(args, config)

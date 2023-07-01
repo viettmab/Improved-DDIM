@@ -8,7 +8,7 @@ import tqdm
 import torch
 import torch.utils.data as data
 
-from models.diffusion import Model
+from models.diffusion import Model, ResidualNet
 from models.ema import EMAHelper
 from functions import get_optimizer
 from functions.losses import loss_registry
@@ -106,7 +106,6 @@ class Diffusion(object):
             num_workers=config.data.num_workers,
         )
         model = Model(config)
-
         model = model.to(self.device)
         model = torch.nn.DataParallel(model)
 
@@ -117,6 +116,21 @@ class Diffusion(object):
             ema_helper.register(model)
         else:
             ema_helper = None
+
+        if args.train2steps:
+            print("Training 2 steps")
+            residual_connection_net = ResidualNet(config.data.image_size, 128)
+            residual_connection_net= residual_connection_net.to(self.device)
+            residual_connection_net = torch.nn.DataParallel(residual_connection_net)
+
+            optimizer_res = get_optimizer(self.config, residual_connection_net.parameters())
+
+            if self.config.model.ema:
+                ema_helper_res = EMAHelper(mu=self.config.model.ema_rate)
+                ema_helper_res.register(residual_connection_net)
+            else:
+                ema_helper_res = None
+
 
         start_epoch, step = 0, 0
         if self.args.resume_training:
@@ -129,6 +143,15 @@ class Diffusion(object):
             step = states[3]
             if self.config.model.ema:
                 ema_helper.load_state_dict(states[4])
+            if args.train2steps:
+                states_res = torch.load(os.path.join(self.args.log_path, "ckpt_res.pth"))
+                residual_connection_net.load_state_dict(states_res[0])
+
+                states_res[1]["param_groups"][0]["eps"] = self.config.optim.eps
+                optimizer_res.load_state_dict(states_res[1])
+                if self.config.model.ema:
+                    ema_helper_res.load_state_dict(states_res[2])
+
 
         for epoch in range(start_epoch, self.config.training.n_epochs):
             data_start = time.time()
@@ -137,6 +160,8 @@ class Diffusion(object):
                 n = x.size(0)
                 data_time += time.time() - data_start
                 model.train()
+                if args.train2steps:
+                    residual_connection_net.train()
                 step += 1
 
                 x = x.to(self.device)
@@ -149,7 +174,10 @@ class Diffusion(object):
                     low=0, high=self.num_timesteps, size=(n // 2 + 1,)
                 ).to(self.device)
                 t = torch.cat([t, self.num_timesteps - t - 1], dim=0)[:n]
-                loss = loss_registry[config.model.type](model, x, t, e, b)
+                if config.model.type == "simple":
+                    loss = loss_registry[config.model.type](model, x, t, e, b)
+                else:
+                    loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b)
 
                 tb_logger.add_scalar("loss", loss, global_step=step)
 
@@ -158,18 +186,29 @@ class Diffusion(object):
                 )
 
                 optimizer.zero_grad()
+                if args.train2steps:
+                    optimizer_res.zero_grad()
+
                 loss.backward()
 
                 try:
                     torch.nn.utils.clip_grad_norm_(
                         model.parameters(), config.optim.grad_clip
                     )
+                    if args.train2steps:
+                        torch.nn.utils.clip_grad_norm_(
+                            residual_connection_net.parameters(), config.optim.grad_clip
+                        )
                 except Exception:
                     pass
                 optimizer.step()
+                if args.train2steps:
+                    optimizer_res.step()
 
                 if self.config.model.ema:
                     ema_helper.update(model)
+                    if args.train2steps:
+                        ema_helper_res.update(residual_connection_net)
 
                 if step % self.config.training.snapshot_freq == 0 or step == 1:
                     states = [
@@ -186,6 +225,19 @@ class Diffusion(object):
                         os.path.join(self.args.log_path, "ckpt_{}.pth".format(step)),
                     )
                     torch.save(states, os.path.join(self.args.log_path, "ckpt.pth"))
+                    if args.train2steps:
+                        states_res = [
+                            residual_connection_net.state_dict(),
+                            optimizer_res.state_dict(),
+                        ]
+                        if self.config.model.ema:
+                            states_res.append(ema_helper_res.state_dict())
+
+                        torch.save(
+                            states_res,
+                            os.path.join(self.args.log_path, "ckpt_{}_res.pth".format(step)),
+                        )
+                        torch.save(states_res, os.path.join(self.args.log_path, "ckpt_res.pth"))
 
                 data_start = time.time()
 
@@ -199,6 +251,7 @@ class Diffusion(object):
                     map_location=self.config.device,
                 )
             else:
+                print(f"Loading checkpoint from ckpt_{self.config.sampling.ckpt_id}.pth")
                 states = torch.load(
                     os.path.join(
                         self.args.log_path, f"ckpt_{self.config.sampling.ckpt_id}.pth"
@@ -245,7 +298,7 @@ class Diffusion(object):
         config = self.config
         img_id = len(glob.glob(f"{self.args.image_folder}/*"))
         print(f"starting from image {img_id}")
-        total_n_samples = 50000
+        total_n_samples = self.args.num_samples
         n_rounds = (total_n_samples - img_id) // config.sampling.batch_size
 
         with torch.no_grad():
