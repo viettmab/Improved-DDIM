@@ -2,3 +2,4 @@
 __pycache__/
 exp/
 pytorch_fid/
+*.pth

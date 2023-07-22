@@ -9,6 +9,7 @@ import torch
 import torch.utils.data as data
 
 from models.diffusion import Model, ResidualNet
+from models.uvit import UViT
 from models.ema import EMAHelper
 from functions import get_optimizer
 from functions.losses import loss_registry
@@ -105,7 +106,16 @@ class Diffusion(object):
             shuffle=True,
             num_workers=config.data.num_workers,
         )
-        model = Model(config)
+        if args.model_type == 'unet':
+            model = Model(config)
+        elif args.model_type == 'uvit':
+            model = UViT(img_size=config.uvit.img_size, patch_size=config.uvit.patch_size, embed_dim=config.uvit.embed_dim,
+                        depth=config.uvit.depth, num_heads=config.uvit.num_heads, mlp_ratio=config.uvit.mlp_ratio,
+                 qkv_bias=config.uvit.qkv_bias, mlp_time_embed=config.uvit.mlp_time_embed, num_classes=config.uvit.num_classes,
+                 )
+            print("Using uvit model")
+        else:
+            raise NotImplementedError("Model type is not defined")
         model = model.to(self.device)
         model = torch.nn.DataParallel(model)
 
@@ -241,8 +251,95 @@ class Diffusion(object):
 
                 data_start = time.time()
 
+    def residual_value(self, path, num_ckpt):
+        with torch.no_grad():
+            args, config = self.args, self.config
+            tb_logger = self.config.tb_logger
+            dataset, test_dataset = get_dataset(args, config)
+            train_loader = data.DataLoader(
+                dataset,
+                batch_size=config.training.batch_size,
+                shuffle=True,
+                num_workers=config.data.num_workers,
+            )
+            model = Model(config)
+            model = model.to(self.device)
+            model = torch.nn.DataParallel(model)
+
+            if self.config.model.ema:
+                ema_helper = EMAHelper(mu=self.config.model.ema_rate)
+                ema_helper.register(model)
+            else:
+                ema_helper = None
+
+            if args.train2steps:
+                print("Using 2 steps")
+                residual_connection_net = ResidualNet(config.data.image_size, 128)
+                residual_connection_net= residual_connection_net.to(self.device)
+                residual_connection_net = torch.nn.DataParallel(residual_connection_net)
+
+                if self.config.model.ema:
+                    ema_helper_res = EMAHelper(mu=self.config.model.ema_rate)
+                    ema_helper_res.register(residual_connection_net)
+                else:
+                    ema_helper_res = None
+
+
+            start_epoch, step = 0, 0
+            states = torch.load(os.path.join(path, f"ckpt_{num_ckpt}.pth"))
+            model.load_state_dict(states[0])
+
+            states[1]["param_groups"][0]["eps"] = self.config.optim.eps
+            start_epoch = states[2]
+            step = states[3]
+            if self.config.model.ema:
+                ema_helper.load_state_dict(states[4])
+            states_res = torch.load(os.path.join(path, f"ckpt_{num_ckpt}_res.pth"))
+            residual_connection_net.load_state_dict(states_res[0])
+
+            states_res[1]["param_groups"][0]["eps"] = self.config.optim.eps
+            if self.config.model.ema:
+                ema_helper_res.load_state_dict(states_res[2])
+
+            for epoch in range(1):
+                dic = {}
+                for value in range(10):
+                    print(value)
+                    step = 0
+                    for i, (x, y) in enumerate(train_loader):
+                        n = x.size(0)
+                        step += 1
+                        x = x.to(self.device)
+                        x = data_transform(self.config, x)
+                        e = torch.randn_like(x)
+                        b = self.betas
+                        # t = torch.full((n,), value).to(self.device)
+                        t = torch.empty((n,), dtype=torch.float32)
+                        t.fill_(value)
+                        t = t.to(self.device)
+                        residual_value = loss_registry["get_residual_value"](model, residual_connection_net, x, t, e, b)
+                        if step == 1:
+                            dic[value] = residual_value
+                        else:
+                            dic[value] = torch.cat([dic[value],residual_value])
+                        if i > 1:
+                            break
+                    dic[value] = torch.mean(dic[value])
+                    print(dic[value])
+            return dic
+    
+
     def sample(self):
-        model = Model(self.config)
+        config = self.config
+        if self.args.model_type == 'unet':
+            model = Model(config)
+        elif self.args.model_type == 'uvit':
+            model = UViT(img_size=config.uvit.img_size, patch_size=config.uvit.patch_size, embed_dim=config.uvit.embed_dim,
+                        depth=config.uvit.depth, num_heads=config.uvit.num_heads, mlp_ratio=config.uvit.mlp_ratio,
+                 qkv_bias=config.uvit.qkv_bias, mlp_time_embed=config.uvit.mlp_time_embed, num_classes=config.uvit.num_classes,
+                 )
+        else:
+            raise NotImplementedError("Model type is not defined")
 
         if not self.args.use_pretrained:
             if getattr(self.config.sampling, "ckpt_id", None) is None:
@@ -293,7 +390,7 @@ class Diffusion(object):
             self.sample_sequence(model)
         else:
             raise NotImplementedError("Sample procedeure not defined")
-
+                
     def sample_fid(self, model):
         config = self.config
         img_id = len(glob.glob(f"{self.args.image_folder}/*"))
