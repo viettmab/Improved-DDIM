@@ -29,6 +29,7 @@ def nonlinearity(x):
     return x*torch.sigmoid(x)
 
 
+
 def Normalize(in_channels):
     return torch.nn.GroupNorm(num_groups=32, num_channels=in_channels, eps=1e-6, affine=True)
 
@@ -339,3 +340,40 @@ class Model(nn.Module):
         h = nonlinearity(h)
         h = self.conv_out(h)
         return h
+
+
+class SiLU(nn.Module):
+    def forward(self, x):
+        return x * torch.sigmoid(x)
+    
+class ResidualNet(nn.Module):
+    def __init__(self, image_size, time_embed_dim):
+        super().__init__()
+        self.image_size = image_size
+        self.time_embed = nn.Sequential(
+            nn.Linear(128, time_embed_dim),
+            SiLU(),
+            nn.Linear(time_embed_dim, time_embed_dim),
+            SiLU(),
+        )
+        self.model = nn.Sequential(
+            nn.Linear(self.image_size * self.image_size * 3 + time_embed_dim, 1024),
+            SiLU(),
+            nn.Linear(1024, 512),
+            SiLU(),
+            nn.Linear(512, 128),
+            SiLU(),
+            nn.Linear(128, 32),
+            SiLU(),
+            nn.Linear(32, 8),
+            SiLU(),
+            nn.Linear(8, 1),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, x, timesteps, y=None):
+        h = torch.flatten(x, start_dim=1)
+        emb = self.time_embed(get_timestep_embedding(timesteps, 128))
+        inputs = torch.cat([h, emb], 1).type(torch.float)
+        return self.model(inputs)
+    
