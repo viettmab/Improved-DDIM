@@ -196,20 +196,20 @@ def train(rank, gpu, args, config):
         if rank == 0:
             if epoch % config.training.snapshot_freq == 0:
                 states = dict({'model_dict': model.state_dict(),
-                            'epoch': epoch + 1,
+                            'epoch': epoch,
                             'args': args,
                             'optimizer': optimizer.state_dict(),
                             'scheduler': scheduler.state_dict(),
                             'step': step})
                 torch.save(
                     states,
-                    os.path.join(exp_path, "ckpt_{}.pth".format(epoch+1)),
+                    os.path.join(exp_path, "ckpt_{}.pth".format(epoch)),
                 )
                 torch.save(states, os.path.join(exp_path, "ckpt.pth"))
                 if config.model.ema:
                     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
                     
-                torch.save(model.state_dict(), os.path.join(exp_path, 'model_{}_ema.pth'.format(epoch+1)))
+                torch.save(model.state_dict(), os.path.join(exp_path, 'model_{}_ema.pth'.format(epoch)))
                 # if config.model.ema:
                 #     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
         # if not args.no_lr_decay:

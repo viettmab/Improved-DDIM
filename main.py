@@ -96,6 +96,7 @@ def parse_args_and_config():
     parser.add_argument("--num_samples", type=int, default=50000, help="Number of generated samples")
     parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
     parser.add_argument("--model_type", type=str, default="unet", help="unet or uvit",)
+    parser.add_argument("--model_ema", action="store_true")
 
     args = parser.parse_args()
     args.log_path = os.path.join(args.exp, "logs", args.doc)
