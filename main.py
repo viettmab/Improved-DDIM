@@ -85,6 +85,12 @@ def parse_args_and_config():
         default=0.0,
         help="eta used to control the variances of sigma",
     )
+    parser.add_argument(
+        "--fid_log",
+        type=str,
+        default="fid.txt",
+        help="File to log FID",
+    )
     parser.add_argument("--sequence", action="store_true")
     parser.add_argument("--ckpt_id", type=int, default=500000, help="ckpt id")
     parser.add_argument("--num_samples", type=int, default=50000, help="Number of generated samples")

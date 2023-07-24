@@ -17,6 +17,7 @@ from datasets import get_dataset, data_transform, inverse_data_transform
 from functions.ckpt_util import get_ckpt_path
 
 import torchvision.utils as tvu
+from pytorch_fid import fid_score
 
 
 def torch2hwcuint8(x, clip=False):
@@ -419,6 +420,10 @@ class Diffusion(object):
                         x[i], os.path.join(self.args.image_folder, f"{img_id}.png")
                     )
                     img_id += 1
+            fid_value = fid_score.calculate_fid_given_paths([self.args.image_folder, "pytorch_fid/cifar10_train_stat.npy"], 50, "cuda", 2048)
+            with open(self.args.fid_log, 'a') as f:
+                f.write(f'Checkpoint {self.config.sampling.ckpt_id}  --> FID {fid_value}\n')
+            print(f'Checkpoint {self.config.sampling.ckpt_id}  --> FID {fid_value}\n')
 
     def sample_sequence(self, model):
         config = self.config
