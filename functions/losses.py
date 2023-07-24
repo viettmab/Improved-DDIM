@@ -47,18 +47,21 @@ def p_mean_variance(model, residual_connection_net, xt, t, b, residual_x_start=N
     coef = calculate_alpha(b)
     at_bar = extract_into_tensor(coef["alphas_cumprod"],t)
     pred_xstart = (xt - eps_predict * torch.sqrt(1 - at_bar)) / torch.sqrt(at_bar)
-    # pred_xstart = pred_xstart.clamp(-1.,1.)
-    # print(pred_xstart)
-    residual_val_raw = torch.tensor([-1]*xt.shape[0])
+
+    #residual_val_raw = torch.tensor([-1]*xt.shape[0])
+    # if residual_x_start is not None:
+    #     if residual_connection_net is not None:
+    #         residual_val_raw = residual_connection_net(
+    #             residual_x_start, t
+    #         ).squeeze()
+    #         while len(residual_val_raw.shape) < len(pred_xstart.shape):
+    #             residual_val_raw = residual_val_raw[..., None]
+    #         residual_val = residual_val_raw.expand(pred_xstart.shape)
+    #         pred_xstart = (1.0 - residual_val) * pred_xstart + residual_val * residual_x_start
     if residual_x_start is not None:
-        if residual_connection_net is not None:
-            residual_val_raw = residual_connection_net(
-                residual_x_start, t
-            ).squeeze()
-            while len(residual_val_raw.shape) < len(pred_xstart.shape):
-                residual_val_raw = residual_val_raw[..., None]
-            residual_val = residual_val_raw.expand(pred_xstart.shape)
-            pred_xstart = (1.0 - residual_val) * pred_xstart + residual_val * residual_x_start
+        residual_val = torch.empty(pred_xstart.shape, dtype=torch.float32, device=pred_xstart.device)
+        residual_val.fill_(0.5)
+        pred_xstart = (1.0 - residual_val) * pred_xstart + residual_val * residual_x_start
 
     model_mean = q_posterior_mean_variance(pred_xstart,xt,t,b)
 
@@ -85,7 +88,7 @@ def train2step_loss(model, residual_connection_net,
     at_bar_prev = extract_into_tensor(coef["alphas_cumprod_prev"],t)
     e_1 = torch.randn_like(e)
     xt_1_first = x0 * torch.sqrt(at_bar_prev) + e_1 * torch.sqrt(1.0 - at_bar_prev)
-    t_prev = torch.clamp(t - 1.0, min=-1)
+    t_prev = torch.clamp(t - 1.0, min=0)
     mean_prediction_1, _, _ = p_mean_variance(model,residual_connection_net,xt_1_first,t_prev,b,x0_pred)
     true_mean_1 = q_posterior_mean_variance(x0, xt_1_first,t_prev,b)
 
@@ -103,7 +106,26 @@ def train2step_loss(model, residual_connection_net,
     mse += (mse_first+mse_second)/2
     return mse
 
+def get_residual_value(model, residual_connection_net,
+                    x0: torch.Tensor,
+                    t: torch.LongTensor,
+                    e: torch.Tensor,
+                    b: torch.Tensor):
+    coef = calculate_alpha(b)
+    at_bar = extract_into_tensor(coef["alphas_cumprod"],t)
+    xt = x0 * torch.sqrt(at_bar) + e * torch.sqrt(1.0 - at_bar)
+    eps_predict = model(xt, t.float())
+    pred_xstart = (xt - eps_predict * torch.sqrt(1 - at_bar)) / torch.sqrt(at_bar)
+    residual_val_raw = torch.tensor([-1]*xt.shape[0])
+    if residual_connection_net is not None:
+        residual_val_raw = residual_connection_net(
+            pred_xstart, t
+        ).squeeze()
+    return residual_val_raw
+
+
 loss_registry = {
     'simple': noise_estimation_loss,
     'train2steps': train2step_loss,
+    'get_residual_value': get_residual_value,
 }

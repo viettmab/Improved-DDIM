@@ -89,6 +89,7 @@ def parse_args_and_config():
     parser.add_argument("--ckpt_id", type=int, default=500000, help="ckpt id")
     parser.add_argument("--num_samples", type=int, default=50000, help="Number of generated samples")
     parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
+    parser.add_argument("--model_type", type=str, default="unet", help="unet or uvit",)
 
     args = parser.parse_args()
     args.log_path = os.path.join(args.exp, "logs", args.doc)
@@ -226,6 +227,8 @@ def main():
             runner.test()
         else:
             runner.train()
+        # a = runner.residual_value("/home/ubuntu/Improved-DDIM/exp/celeba_residual/logs/celeba",100000)
+        # torch.save(a, "residual.pth")
     except Exception:
         logging.error(traceback.format_exc())
 
