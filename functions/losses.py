@@ -110,7 +110,7 @@ def mismatch_loss(model, residual_connection_net,
                     x0: torch.Tensor,
                     t: torch.LongTensor,
                     e: torch.Tensor,
-                    b: torch.Tensor, keepdim=False):
+                    b: torch.Tensor, gamma=1):
     coef = calculate_alpha(b)
     at_bar = extract_into_tensor(coef["alphas_cumprod"],t)
     xt = x0 * torch.sqrt(at_bar) + e * torch.sqrt(1.0 - at_bar)
@@ -136,7 +136,7 @@ def mismatch_loss(model, residual_connection_net,
     t_prev = torch.clamp(t - 1.0, min=0)
     eps_prediction_1 = model(xt_1_tilde, t_prev.float())
     mse_1 = (e_1 - eps_prediction_1).square().sum(dim=(1, 2, 3)).mean(dim=0)
-    mse += mse_1
+    mse += gamma * mse_1
     return mse
 
 def get_residual_value(model, residual_connection_net,
@@ -161,5 +161,5 @@ loss_registry = {
     'simple': noise_estimation_loss,
     'train2steps': train2step_loss,
     'get_residual_value': get_residual_value,
-    'mismatch': mismatch_loss
+    'train_mismatch': mismatch_loss
 }
