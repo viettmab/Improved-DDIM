@@ -71,7 +71,7 @@ def p_mean_variance(model, residual_connection_net, xt, t, b, residual_x_start=N
     
     return model_mean, pred_xstart, eps_predict
 
-    
+
 def train2step_loss(model, residual_connection_net,
                     x0: torch.Tensor,
                     t: torch.LongTensor,
@@ -106,6 +106,39 @@ def train2step_loss(model, residual_connection_net,
     mse += (mse_first+mse_second)/2
     return mse
 
+def mismatch_loss(model, residual_connection_net,
+                    x0: torch.Tensor,
+                    t: torch.LongTensor,
+                    e: torch.Tensor,
+                    b: torch.Tensor, keepdim=False):
+    coef = calculate_alpha(b)
+    at_bar = extract_into_tensor(coef["alphas_cumprod"],t)
+    xt = x0 * torch.sqrt(at_bar) + e * torch.sqrt(1.0 - at_bar)
+    eps_prediction = model(xt, t.float())
+    x0_pred = (xt - eps_prediction * torch.sqrt(1 - at_bar)) / torch.sqrt(at_bar)
+    mse = (e - eps_prediction).square().sum(dim=(1, 2, 3)).mean(dim=0)
+ 
+    # Interpolation
+    residual_val_raw = torch.tensor([-1]*xt.shape[0])
+    if residual_connection_net is not None:
+        residual_val_raw = residual_connection_net(
+            x0_pred, t
+        ).squeeze()
+        while len(residual_val_raw.shape) < len(x0_pred.shape):
+            residual_val_raw = residual_val_raw[..., None]
+        residual_val = residual_val_raw.expand(x0_pred.shape)
+        x0_tilde = (1.0 - residual_val) * x0_pred + residual_val * x0
+
+    # Step t-1
+    e_1 = torch.randn_like(e)
+    at_bar_prev = extract_into_tensor(coef["alphas_cumprod_prev"],t)
+    xt_1_tilde= x0_tilde * torch.sqrt(at_bar_prev) + e_1 * torch.sqrt(1.0 - at_bar_prev)
+    t_prev = torch.clamp(t - 1.0, min=0)
+    eps_prediction_1 = model(xt_1_tilde, t_prev.float())
+    mse_1 = (e_1 - eps_prediction_1).square().sum(dim=(1, 2, 3)).mean(dim=0)
+    mse += mse_1
+    return mse
+
 def get_residual_value(model, residual_connection_net,
                     x0: torch.Tensor,
                     t: torch.LongTensor,
@@ -128,4 +161,5 @@ loss_registry = {
     'simple': noise_estimation_loss,
     'train2steps': train2step_loss,
     'get_residual_value': get_residual_value,
+    'mismatch': mismatch_loss
 }
