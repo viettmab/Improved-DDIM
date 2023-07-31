@@ -11,17 +11,21 @@ data:
 
 model:
     type: "simple"
-    in_channels: 3
-    out_ch: 3
-    ch: 128
-    ch_mult: [1, 2, 2, 2, 4]
-    num_res_blocks: 2
-    attn_resolutions: [16, ]
-    dropout: 0.1
-    var_type: fixedlarge
     ema_rate: 0.9999
     ema: True
-    resamp_with_conv: True
+    var_type: fixedlarge
+
+uvit:
+    name: 'uvit'
+    img_size: 64
+    patch_size: 4
+    embed_dim: 512
+    depth: 12
+    num_heads: 8
+    mlp_ratio: 4
+    qkv_bias: False
+    mlp_time_embed: False
+    num_classes: -1
 
 diffusion:
     beta_schedule: linear
@@ -41,10 +45,8 @@ sampling:
     last_only: True
 
 optim:
-    weight_decay: 0.000
-    optimizer: "Adam"
+    optimizer: "AdamW"
     lr: 0.0002
-    beta1: 0.9
-    amsgrad: false
-    eps: 0.00000001
-    grad_clip: 1.0
+    weight_decay: 0.03
+    beta1: 0.99
+    beta2: 0.99

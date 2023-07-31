@@ -117,11 +117,12 @@ def train(rank, gpu, args, config):
         raise NotImplementedError("Model type is not defined")
     model = model.to(device)
     broadcast_params(model.parameters())
-    optimizer = optim.Adam(model.parameters(), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
-                        betas=(config.optim.beta1, 0.999), amsgrad=config.optim.amsgrad, eps=config.optim.eps)
+    optimizer = optim.AdamW(model.parameters(), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
+                          betas=(config.optim.beta1, config.optim.beta2))
     
     if config.model.ema:
         optimizer = EMA(optimizer, ema_decay=config.model.ema_rate)
+        optimizer.ema_start()
     
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, config.training.n_epochs, eta_min=1e-5)
     
@@ -210,8 +211,8 @@ def train(rank, gpu, args, config):
                     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
                     
                 torch.save(model.state_dict(), os.path.join(exp_path, 'model_{}_ema.pth'.format(epoch)))
-                # if config.model.ema:
-                #     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
+                if config.model.ema:
+                    optimizer.swap_parameters_with_ema(store_params_in_ema=True)
         # if not args.no_lr_decay:
         #     scheduler.step() 
 

@@ -99,7 +99,7 @@ class Diffusion(object):
 
     def train(self):
         args, config = self.args, self.config
-        tb_logger = self.config.tb_logger
+        # tb_logger = self.config.tb_logger
         dataset, test_dataset = get_dataset(args, config)
         train_loader = data.DataLoader(
             dataset,
@@ -190,10 +190,10 @@ class Diffusion(object):
                 else:
                     loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b)
 
-                tb_logger.add_scalar("loss", loss, global_step=step)
+                # tb_logger.add_scalar("loss", loss, global_step=step)
 
                 logging.info(
-                    f"step: {step}, loss: {loss.item()}, data time: {data_time / (i+1)}"
+                    f"epoch: {epoch}, step: {step}, loss: {loss.item()}, data time: {data_time / (i+1)}"
                 )
 
                 optimizer.zero_grad()
@@ -221,7 +221,7 @@ class Diffusion(object):
                     if args.train2steps:
                         ema_helper_res.update(residual_connection_net)
 
-                if step % self.config.training.snapshot_freq == 0 or step == 1:
+                if epoch % self.config.training.snapshot_freq == 0 or epoch == 1:
                     states = [
                         model.state_dict(),
                         optimizer.state_dict(),
@@ -233,7 +233,7 @@ class Diffusion(object):
 
                     torch.save(
                         states,
-                        os.path.join(self.args.log_path, "ckpt_{}.pth".format(step)),
+                        os.path.join(self.args.log_path, "ckpt_{}.pth".format(epoch)),
                     )
                     torch.save(states, os.path.join(self.args.log_path, "ckpt.pth"))
                     if args.train2steps:
@@ -246,7 +246,7 @@ class Diffusion(object):
 
                         torch.save(
                             states_res,
-                            os.path.join(self.args.log_path, "ckpt_{}_res.pth".format(step)),
+                            os.path.join(self.args.log_path, "ckpt_{}_res.pth".format(epoch)),
                         )
                         torch.save(states_res, os.path.join(self.args.log_path, "ckpt_res.pth"))
 
@@ -255,7 +255,7 @@ class Diffusion(object):
     def residual_value(self, path, num_ckpt):
         with torch.no_grad():
             args, config = self.args, self.config
-            tb_logger = self.config.tb_logger
+            # tb_logger = self.config.tb_logger
             dataset, test_dataset = get_dataset(args, config)
             train_loader = data.DataLoader(
                 dataset,

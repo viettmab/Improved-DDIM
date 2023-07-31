@@ -17,8 +17,8 @@ class EMA(Optimizer):
     def __init__(self, opt, ema_decay):
         self.defaults = opt.defaults
         self.ema_decay_tmp = ema_decay
-        self.ema_decay = 0
-        self.apply_ema = False
+        self.ema_decay = ema_decay
+        self.apply_ema = True
         self.optimizer = opt
         self.state = opt.state
         self.param_groups = opt.param_groups
