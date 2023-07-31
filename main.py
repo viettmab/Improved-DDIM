@@ -7,7 +7,7 @@ import sys
 import os
 import torch
 import numpy as np
-import torch.utils.tensorboard as tb
+# import torch.utils.tensorboard as tb
 
 from runners.diffusion import Diffusion
 
@@ -85,11 +85,18 @@ def parse_args_and_config():
         default=0.0,
         help="eta used to control the variances of sigma",
     )
+    parser.add_argument(
+        "--fid_log",
+        type=str,
+        default="fid.txt",
+        help="File to log FID",
+    )
     parser.add_argument("--sequence", action="store_true")
     parser.add_argument("--ckpt_id", type=int, default=500000, help="ckpt id")
     parser.add_argument("--num_samples", type=int, default=50000, help="Number of generated samples")
     parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
     parser.add_argument("--model_type", type=str, default="unet", help="unet or uvit",)
+    parser.add_argument("--model_ema", action="store_true")
 
     args = parser.parse_args()
     args.log_path = os.path.join(args.exp, "logs", args.doc)
@@ -99,7 +106,7 @@ def parse_args_and_config():
         config = yaml.safe_load(f)
     new_config = dict2namespace(config)
 
-    tb_path = os.path.join(args.exp, "tensorboard", args.doc)
+    # tb_path = os.path.join(args.exp, "tensorboard", args.doc)
 
     if not args.test and not args.sample:
         if not args.resume_training:
@@ -114,10 +121,10 @@ def parse_args_and_config():
 
                 if overwrite:
                     shutil.rmtree(args.log_path)
-                    shutil.rmtree(tb_path)
+                    # shutil.rmtree(tb_path)
                     os.makedirs(args.log_path)
-                    if os.path.exists(tb_path):
-                        shutil.rmtree(tb_path)
+                    # if os.path.exists(tb_path):
+                        # shutil.rmtree(tb_path)
                 else:
                     print("Folder exists. Program halted.")
                     sys.exit(0)
@@ -127,7 +134,7 @@ def parse_args_and_config():
             with open(os.path.join(args.log_path, "config.yml"), "w") as f:
                 yaml.dump(new_config, f, default_flow_style=False)
 
-        new_config.tb_logger = tb.SummaryWriter(log_dir=tb_path)
+        # new_config.tb_logger = tb.SummaryWriter(log_dir=tb_path)
         # setup logger
         level = getattr(logging, args.verbose.upper(), None)
         if not isinstance(level, int):

@@ -17,6 +17,7 @@ from datasets import get_dataset, data_transform, inverse_data_transform
 from functions.ckpt_util import get_ckpt_path
 
 import torchvision.utils as tvu
+from pytorch_fid import fid_score
 
 
 def torch2hwcuint8(x, clip=False):
@@ -98,7 +99,7 @@ class Diffusion(object):
 
     def train(self):
         args, config = self.args, self.config
-        tb_logger = self.config.tb_logger
+        # tb_logger = self.config.tb_logger
         dataset, test_dataset = get_dataset(args, config)
         train_loader = data.DataLoader(
             dataset,
@@ -189,10 +190,10 @@ class Diffusion(object):
                 else:
                     loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b)
 
-                tb_logger.add_scalar("loss", loss, global_step=step)
+                # tb_logger.add_scalar("loss", loss, global_step=step)
 
                 logging.info(
-                    f"step: {step}, loss: {loss.item()}, data time: {data_time / (i+1)}"
+                    f"epoch: {epoch}, step: {step}, loss: {loss.item()}, data time: {data_time / (i+1)}"
                 )
 
                 optimizer.zero_grad()
@@ -220,7 +221,7 @@ class Diffusion(object):
                     if args.train2steps:
                         ema_helper_res.update(residual_connection_net)
 
-                if step % self.config.training.snapshot_freq == 0 or step == 1:
+                if epoch % self.config.training.snapshot_freq == 0 or epoch == 1:
                     states = [
                         model.state_dict(),
                         optimizer.state_dict(),
@@ -232,7 +233,7 @@ class Diffusion(object):
 
                     torch.save(
                         states,
-                        os.path.join(self.args.log_path, "ckpt_{}.pth".format(step)),
+                        os.path.join(self.args.log_path, "ckpt_{}.pth".format(epoch)),
                     )
                     torch.save(states, os.path.join(self.args.log_path, "ckpt.pth"))
                     if args.train2steps:
@@ -245,7 +246,7 @@ class Diffusion(object):
 
                         torch.save(
                             states_res,
-                            os.path.join(self.args.log_path, "ckpt_{}_res.pth".format(step)),
+                            os.path.join(self.args.log_path, "ckpt_{}_res.pth".format(epoch)),
                         )
                         torch.save(states_res, os.path.join(self.args.log_path, "ckpt_res.pth"))
 
@@ -254,7 +255,7 @@ class Diffusion(object):
     def residual_value(self, path, num_ckpt):
         with torch.no_grad():
             args, config = self.args, self.config
-            tb_logger = self.config.tb_logger
+            # tb_logger = self.config.tb_logger
             dataset, test_dataset = get_dataset(args, config)
             train_loader = data.DataLoader(
                 dataset,
@@ -342,30 +343,42 @@ class Diffusion(object):
             raise NotImplementedError("Model type is not defined")
 
         if not self.args.use_pretrained:
-            if getattr(self.config.sampling, "ckpt_id", None) is None:
-                states = torch.load(
-                    os.path.join(self.args.log_path, "ckpt.pth"),
-                    map_location=self.config.device,
-                )
-            else:
-                print(f"Loading checkpoint from ckpt_{self.config.sampling.ckpt_id}.pth")
+            if self.args.model_ema:
+                print(f"Loading checkpoint from model_{self.config.sampling.ckpt_id}_ema.pth")
                 states = torch.load(
                     os.path.join(
-                        self.args.log_path, f"ckpt_{self.config.sampling.ckpt_id}.pth"
+                        self.args.log_path, f"model_{self.config.sampling.ckpt_id}_ema.pth"
                     ),
-                    map_location=self.config.device,
+                    map_location=self.device,
                 )
-            model = model.to(self.device)
-            model = torch.nn.DataParallel(model)
-            model.load_state_dict(states[0], strict=True)
-
-            if self.config.model.ema:
-                ema_helper = EMAHelper(mu=self.config.model.ema_rate)
-                ema_helper.register(model)
-                ema_helper.load_state_dict(states[-1])
-                ema_helper.ema(model)
+                model = model.to(self.device)
+                model = torch.nn.DataParallel(model)
+                model.load_state_dict(states, strict=True)
             else:
-                ema_helper = None
+                if getattr(self.config.sampling, "ckpt_id", None) is None:
+                    states = torch.load(
+                        os.path.join(self.args.log_path, "ckpt.pth"),
+                        map_location=self.device,
+                    )
+                else:
+                    print(f"Loading checkpoint from ckpt_{self.config.sampling.ckpt_id}.pth")
+                    states = torch.load(
+                        os.path.join(
+                            self.args.log_path, f"ckpt_{self.config.sampling.ckpt_id}.pth"
+                        ),
+                        map_location=self.device,
+                    )
+                model = model.to(self.device)
+                model = torch.nn.DataParallel(model)
+                model.load_state_dict(states[0], strict=True)
+
+                if self.config.model.ema:
+                    ema_helper = EMAHelper(mu=self.config.model.ema_rate)
+                    ema_helper.register(model)
+                    ema_helper.load_state_dict(states[-1])
+                    ema_helper.ema(model)
+                else:
+                    ema_helper = None
         else:
             # This used the pretrained DDPM model, see https://github.com/pesser/pytorch_diffusion
             if self.config.data.dataset == "CIFAR10":
@@ -419,6 +432,19 @@ class Diffusion(object):
                         x[i], os.path.join(self.args.image_folder, f"{img_id}.png")
                     )
                     img_id += 1
+            if self.config.data.dataset == "CIFAR10":
+                fid_value = fid_score.calculate_fid_given_paths([self.args.image_folder,
+                                                             "pytorch_fid/cifar10_train_stat.npy"], 50, "cuda", 2048)
+            elif self.config.data.dataset == "CELEBA":
+                fid_value = fid_score.calculate_fid_given_paths([self.args.image_folder,
+                                                             "pytorch_fid/fid_stats_celeba64.npz"], 50, "cuda", 2048)
+            elif self.config.data.dataset == "LSUN" and self.config.data.category == "church_outdoor":
+                fid_value = fid_score.calculate_fid_given_paths([self.args.image_folder,
+                                                             "pytorch_fid/lsun_church_stat.npy"], 50, "cuda", 2048)
+            
+            with open(self.args.fid_log, 'a') as f:
+                f.write(f'Checkpoint {self.config.sampling.ckpt_id}  --> FID {fid_value}\n')
+            print(f'Checkpoint {self.config.sampling.ckpt_id}  --> FID {fid_value}\n')
 
     def sample_sequence(self, model):
         config = self.config
