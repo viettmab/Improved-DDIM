@@ -153,8 +153,8 @@ def train(rank, gpu, args, config):
         step = checkpoint["step"]
         if args.train_mismatch:
             checkpoint_file_res = os.path.join(exp_path, 'ckpt_res.pth')
-            checkpoint = torch.load(checkpoint_file_res, map_location=device)
-            residual_connection_net.load_state_dict(checkpoint["model_dict"])
+            checkpoint_res = torch.load(checkpoint_file_res, map_location=device)
+            residual_connection_net.load_state_dict(checkpoint_res["model_dict"])
         
         print("=> loaded checkpoint (epoch {}, step {})".format(epoch, step))
     else:
@@ -338,7 +338,7 @@ if __name__ == '__main__':
     parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
     parser.add_argument("--model_type", type=str, default="unet", help="unet or uvit",)
     parser.add_argument("--train_mismatch", action="store_true", help="Whether to train mismatch")
-    parser.add_argument("--gamma", type=int, default=1, help="gamma coef of mismatch loss")
+    parser.add_argument("--gamma", type=float, default=1., help="gamma coef of mismatch loss")
 
     args = parser.parse_args()
 
