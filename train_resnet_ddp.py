@@ -121,12 +121,14 @@ def train(rank, gpu, args, config):
 
     if args.train_mismatch:
         print("Training mismatch")
-        residual_connection_net = ResidualNet(config.data.image_size, 128)
-        residual_connection_net= residual_connection_net.to(device)
-        broadcast_params(residual_connection_net.parameters())
-        residual_connection_net = nn.parallel.DistributedDataParallel(residual_connection_net, device_ids=[gpu],find_unused_parameters=True)
+        # residual_connection_net = ResidualNet(config.data.image_size, 128)
+        # residual_connection_net= residual_connection_net.to(device)
+        # broadcast_params(residual_connection_net.parameters())
+        # residual_connection_net = nn.parallel.DistributedDataParallel(residual_connection_net, device_ids=[gpu],find_unused_parameters=True)
     if args.train_mismatch:
-        optimizer = optim.AdamW(list(model.parameters())+list(residual_connection_net.parameters()), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
+        # optimizer = optim.AdamW(list(model.parameters())+list(residual_connection_net.parameters()), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
+        #                   betas=(config.optim.beta1, config.optim.beta2))
+        optimizer = optim.AdamW(model.parameters(), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
                           betas=(config.optim.beta1, config.optim.beta2))
     else:
         optimizer = optim.AdamW(model.parameters(), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
@@ -151,10 +153,10 @@ def train(rank, gpu, args, config):
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
         step = checkpoint["step"]
-        if args.train_mismatch:
-            checkpoint_file_res = os.path.join(exp_path, 'ckpt_res.pth')
-            checkpoint_res = torch.load(checkpoint_file_res, map_location=device)
-            residual_connection_net.load_state_dict(checkpoint_res["model_dict"])
+        # if args.train_mismatch:
+        #     checkpoint_file_res = os.path.join(exp_path, 'ckpt_res.pth')
+        #     checkpoint_res = torch.load(checkpoint_file_res, map_location=device)
+        #     residual_connection_net.load_state_dict(checkpoint_file_res["model_dict"])
         
         print("=> loaded checkpoint (epoch {}, step {})".format(epoch, step))
     else:
@@ -187,7 +189,8 @@ def train(rank, gpu, args, config):
             elif config.model.type == "train2steps":
                 loss = loss_registry[config.model.type](model, x, t, e, b)
             elif config.model.type == "train_mismatch":
-                loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b, args.gamma)
+                # loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b, args.gamma)
+                loss = loss_registry[config.model.type](model, None, x, t, e, b, args.gamma)
             else:
                 raise NotImplementedError("Loss type is not defined")
 
@@ -201,10 +204,10 @@ def train(rank, gpu, args, config):
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(), config.optim.grad_clip
                 )   
-                if args.train_mismatch:
-                    torch.nn.utils.clip_grad_norm_(
-                        residual_connection_net.parameters(), config.optim.grad_clip
-                    )     
+                # if args.train_mismatch:
+                #     torch.nn.utils.clip_grad_norm_(
+                #         residual_connection_net.parameters(), config.optim.grad_clip
+                #     )     
             except Exception:
                 pass
             optimizer.step()
@@ -222,23 +225,23 @@ def train(rank, gpu, args, config):
                     os.path.join(exp_path, "ckpt_{}.pth".format(epoch)),
                 )
                 torch.save(states, os.path.join(exp_path, "ckpt.pth"))
-                if args.train_mismatch:
-                    states_res = dict({'model_dict': residual_connection_net.state_dict(),
-                            'epoch': epoch,
-                            'args': args,
-                            'step': step})
-                    torch.save(
-                        states_res,
-                        os.path.join(exp_path, "ckpt_{}_res.pth".format(epoch)),
-                    )
-                    torch.save(states_res, os.path.join(exp_path, "ckpt_res.pth"))
+                # if args.train_mismatch:
+                #     states_res = dict({'model_dict': residual_connection_net.state_dict(),
+                #             'epoch': epoch,
+                #             'args': args,
+                #             'step': step})
+                #     torch.save(
+                #         states_res,
+                #         os.path.join(exp_path, "ckpt_{}_res.pth".format(epoch)),
+                #     )
+                #     torch.save(states_res, os.path.join(exp_path, "ckpt_res.pth"))
 
                 if config.model.ema:
                     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
                     
                 torch.save(model.state_dict(), os.path.join(exp_path, 'model_{}_ema.pth'.format(epoch)))
-                if args.train_mismatch:
-                    torch.save(residual_connection_net.state_dict(), os.path.join(exp_path, 'res_{}_ema.pth'.format(epoch)))
+                # if args.train_mismatch:
+                #     torch.save(residual_connection_net.state_dict(), os.path.join(exp_path, 'res_{}_ema.pth'.format(epoch)))
                 if config.model.ema:
                     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
 
@@ -338,7 +341,7 @@ if __name__ == '__main__':
     parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
     parser.add_argument("--model_type", type=str, default="unet", help="unet or uvit",)
     parser.add_argument("--train_mismatch", action="store_true", help="Whether to train mismatch")
-    parser.add_argument("--gamma", type=float, default=1., help="gamma coef of mismatch loss")
+    parser.add_argument("--gamma", type=int, default=1, help="gamma coef of mismatch loss")
 
     args = parser.parse_args()
 
