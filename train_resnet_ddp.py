@@ -20,9 +20,9 @@ import torch.distributed as dist
 import shutil
 from runners.diffusion import Diffusion
 from datasets import get_dataset, data_transform, inverse_data_transform
+from functions import get_optimizer
 from models.diffusion import Model, ResidualNet
 from models.uvit import UViT
-from models.ema import EMAHelper
 from functions.losses import loss_registry
 from ema import EMA
 
@@ -106,31 +106,32 @@ def train(rank, gpu, args, config):
                                             drop_last = True)
     args.layout = False
     if args.model_type == 'unet':
-            model = Model(config)
+        model = Model(config)
+        logging.info("Using Unet model")
     elif args.model_type == 'uvit':
         model = UViT(img_size=config.uvit.img_size, patch_size=config.uvit.patch_size, embed_dim=config.uvit.embed_dim,
                     depth=config.uvit.depth, num_heads=config.uvit.num_heads, mlp_ratio=config.uvit.mlp_ratio,
                 qkv_bias=config.uvit.qkv_bias, mlp_time_embed=config.uvit.mlp_time_embed, num_classes=config.uvit.num_classes,
                 )
-        print("Using Uvit model")
+        logging.info("Using Uvit model")
     else:
         raise NotImplementedError("Model type is not defined")
     model = model.to(device)
     broadcast_params(model.parameters())
     model = nn.parallel.DistributedDataParallel(model, device_ids=[gpu],find_unused_parameters=True)
 
-    if args.train_mismatch:
-        print("Training mismatch")
+    if args.use_resnet:
+        logging.info("Using residual network")
         residual_connection_net = ResidualNet(config.data.image_size, 128)
         residual_connection_net= residual_connection_net.to(device)
         broadcast_params(residual_connection_net.parameters())
         residual_connection_net = nn.parallel.DistributedDataParallel(residual_connection_net, device_ids=[gpu],find_unused_parameters=True)
-    if args.train_mismatch:
-        optimizer = optim.AdamW(list(model.parameters())+list(residual_connection_net.parameters()), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
-                          betas=(config.optim.beta1, config.optim.beta2))
     else:
-        optimizer = optim.AdamW(model.parameters(), lr=config.optim.lr, weight_decay=config.optim.weight_decay,
-                          betas=(config.optim.beta1, config.optim.beta2))
+        residual_connection_net = None
+    if args.use_resnet:
+        optimizer = get_optimizer(config, list(model.parameters())+list(residual_connection_net.parameters()))
+    else:
+        optimizer = get_optimizer(config, model.parameters())
     
     if config.model.ema:
         optimizer = EMA(optimizer, ema_decay=config.model.ema_rate)
@@ -151,12 +152,12 @@ def train(rank, gpu, args, config):
         optimizer.load_state_dict(checkpoint["optimizer"])
         scheduler.load_state_dict(checkpoint["scheduler"])
         step = checkpoint["step"]
-        if args.train_mismatch:
+        if args.use_resnet:
             checkpoint_file_res = os.path.join(exp_path, 'ckpt_res.pth')
             checkpoint_res = torch.load(checkpoint_file_res, map_location=device)
             residual_connection_net.load_state_dict(checkpoint_res["model_dict"])
         
-        print("=> loaded checkpoint (epoch {}, step {})".format(epoch, step))
+        logging.info("=> loaded checkpoint (epoch {}, step {})".format(epoch, step))
     else:
         step, epoch, init_epoch = 0, 0, 0
     
@@ -185,7 +186,7 @@ def train(rank, gpu, args, config):
             if config.model.type == "simple":
                 loss = loss_registry[config.model.type](model, x, t, e, b)
             elif config.model.type == "train2steps":
-                loss = loss_registry[config.model.type](model, x, t, e, b)
+                loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b)
             elif config.model.type == "train_mismatch":
                 loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b, args.gamma)
             else:
@@ -201,7 +202,7 @@ def train(rank, gpu, args, config):
                 torch.nn.utils.clip_grad_norm_(
                     model.parameters(), config.optim.grad_clip
                 )   
-                if args.train_mismatch:
+                if args.use_resnet:
                     torch.nn.utils.clip_grad_norm_(
                         residual_connection_net.parameters(), config.optim.grad_clip
                     )     
@@ -222,7 +223,7 @@ def train(rank, gpu, args, config):
                     os.path.join(exp_path, "ckpt_{}.pth".format(epoch)),
                 )
                 torch.save(states, os.path.join(exp_path, "ckpt.pth"))
-                if args.train_mismatch:
+                if args.use_resnet:
                     states_res = dict({'model_dict': residual_connection_net.state_dict(),
                             'epoch': epoch,
                             'args': args,
@@ -237,7 +238,7 @@ def train(rank, gpu, args, config):
                     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
                     
                 torch.save(model.state_dict(), os.path.join(exp_path, 'model_{}_ema.pth'.format(epoch)))
-                if args.train_mismatch:
+                if args.use_resnet:
                     torch.save(residual_connection_net.state_dict(), os.path.join(exp_path, 'res_{}_ema.pth'.format(epoch)))
                 if config.model.ema:
                     optimizer.swap_parameters_with_ema(store_params_in_ema=True)
@@ -335,9 +336,8 @@ if __name__ == '__main__':
     parser.add_argument("--sequence", action="store_true")
     parser.add_argument("--ckpt_id", type=int, default=500000, help="ckpt id")
     parser.add_argument("--num_samples", type=int, default=50000, help="Number of generated samples")
-    parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
     parser.add_argument("--model_type", type=str, default="unet", help="unet or uvit",)
-    parser.add_argument("--train_mismatch", action="store_true", help="Whether to train mismatch")
+    parser.add_argument("--use_resnet", action="store_true", help="Whether to use residual network")
     parser.add_argument("--gamma", type=float, default=1., help="gamma coef of mismatch loss")
 
     args = parser.parse_args()
