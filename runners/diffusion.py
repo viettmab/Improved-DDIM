@@ -109,12 +109,13 @@ class Diffusion(object):
         )
         if args.model_type == 'unet':
             model = Model(config)
+            logging.info("Using Unet model")
         elif args.model_type == 'uvit':
             model = UViT(img_size=config.uvit.img_size, patch_size=config.uvit.patch_size, embed_dim=config.uvit.embed_dim,
                         depth=config.uvit.depth, num_heads=config.uvit.num_heads, mlp_ratio=config.uvit.mlp_ratio,
                  qkv_bias=config.uvit.qkv_bias, mlp_time_embed=config.uvit.mlp_time_embed, num_classes=config.uvit.num_classes,
                  )
-            print("Using uvit model")
+            logging.info("Using Uvit model")
         else:
             raise NotImplementedError("Model type is not defined")
         model = model.to(self.device)
@@ -128,8 +129,8 @@ class Diffusion(object):
         else:
             ema_helper = None
 
-        if args.train2steps:
-            print("Training 2 steps")
+        if args.use_resnet:
+            logging.info("Using residual network")
             residual_connection_net = ResidualNet(config.data.image_size, 128)
             residual_connection_net= residual_connection_net.to(self.device)
             residual_connection_net = torch.nn.DataParallel(residual_connection_net)
@@ -141,27 +142,30 @@ class Diffusion(object):
                 ema_helper_res.register(residual_connection_net)
             else:
                 ema_helper_res = None
+        else:
+            residual_connection_net = None
 
 
         start_epoch, step = 0, 0
         if self.args.resume_training:
             states = torch.load(os.path.join(self.args.log_path, "ckpt.pth"))
-            model.load_state_dict(states[0])
+            model.load_state_dict(states["model_dict"])
 
-            states[1]["param_groups"][0]["eps"] = self.config.optim.eps
-            optimizer.load_state_dict(states[1])
-            start_epoch = states[2]
-            step = states[3]
+            states["optimizer"]["param_groups"][0]["eps"] = self.config.optim.eps
+            optimizer.load_state_dict(states["optimizer"])
+            start_epoch = states["epoch"]
+            step = states["step"]
             if self.config.model.ema:
-                ema_helper.load_state_dict(states[4])
-            if args.train2steps:
+                ema_states = torch.load(os.path.join(self.args.log_path, "model_ema.pth"))
+                ema_helper.load_state_dict(ema_states)
+            if args.use_resnet:
                 states_res = torch.load(os.path.join(self.args.log_path, "ckpt_res.pth"))
-                residual_connection_net.load_state_dict(states_res[0])
+                residual_connection_net.load_state_dict(states_res["model_dict"])
 
-                states_res[1]["param_groups"][0]["eps"] = self.config.optim.eps
-                optimizer_res.load_state_dict(states_res[1])
+                states_res["optimizer"]["param_groups"][0]["eps"] = self.config.optim.eps
+                optimizer_res.load_state_dict(states_res["optimizer"])
                 if self.config.model.ema:
-                    ema_helper_res.load_state_dict(states_res[2])
+                    ema_helper_res.load_state_dict(torch.load(os.path.join(self.args.log_path, "res_ema.pth")))
 
 
         for epoch in range(start_epoch, self.config.training.n_epochs):
@@ -171,7 +175,7 @@ class Diffusion(object):
                 n = x.size(0)
                 data_time += time.time() - data_start
                 model.train()
-                if args.train2steps:
+                if args.use_resnet:
                     residual_connection_net.train()
                 step += 1
 
@@ -187,8 +191,12 @@ class Diffusion(object):
                 t = torch.cat([t, self.num_timesteps - t - 1], dim=0)[:n]
                 if config.model.type == "simple":
                     loss = loss_registry[config.model.type](model, x, t, e, b)
-                else:
+                elif config.model.type == "train2steps":
                     loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b)
+                elif config.model.type == "train_mismatch":
+                    loss = loss_registry[config.model.type](model, residual_connection_net, x, t, e, b, args.gamma)
+                else:
+                    raise NotImplementedError("Loss type is not defined")
 
                 # tb_logger.add_scalar("loss", loss, global_step=step)
 
@@ -197,7 +205,7 @@ class Diffusion(object):
                 )
 
                 optimizer.zero_grad()
-                if args.train2steps:
+                if args.use_resnet:
                     optimizer_res.zero_grad()
 
                 loss.backward()
@@ -206,49 +214,53 @@ class Diffusion(object):
                     torch.nn.utils.clip_grad_norm_(
                         model.parameters(), config.optim.grad_clip
                     )
-                    if args.train2steps:
+                    if args.use_resnet:
                         torch.nn.utils.clip_grad_norm_(
                             residual_connection_net.parameters(), config.optim.grad_clip
                         )
                 except Exception:
                     pass
                 optimizer.step()
-                if args.train2steps:
+                if args.use_resnet:
                     optimizer_res.step()
 
                 if self.config.model.ema:
                     ema_helper.update(model)
-                    if args.train2steps:
+                    if args.use_resnet:
                         ema_helper_res.update(residual_connection_net)
 
                 if epoch % self.config.training.snapshot_freq == 0 or epoch == 1:
-                    states = [
-                        model.state_dict(),
-                        optimizer.state_dict(),
-                        epoch,
-                        step,
-                    ]
-                    if self.config.model.ema:
-                        states.append(ema_helper.state_dict())
-
+                    states = dict({'model_dict': model.state_dict(),
+                            'epoch': epoch,
+                            'args': args,
+                            'optimizer': optimizer.state_dict(),
+                            'step': step})
                     torch.save(
                         states,
                         os.path.join(self.args.log_path, "ckpt_{}.pth".format(epoch)),
                     )
                     torch.save(states, os.path.join(self.args.log_path, "ckpt.pth"))
-                    if args.train2steps:
-                        states_res = [
-                            residual_connection_net.state_dict(),
-                            optimizer_res.state_dict(),
-                        ]
-                        if self.config.model.ema:
-                            states_res.append(ema_helper_res.state_dict())
+                    if self.config.model.ema:
+                        torch.save(ema_helper.state_dict(), os.path.join(self.args.log_path, 'model_{}_ema.pth'.format(epoch)))
+                        torch.save(ema_helper.state_dict(), os.path.join(self.args.log_path, 'model_ema.pth'))
 
+                    if args.use_resnet:
+                        states_res = dict({'model_dict': residual_connection_net.state_dict(),
+                                           'optimizer': optimizer_res.state_dict(),
+                                            'epoch': epoch,
+                                            'args': args,
+                                            'step': step})
                         torch.save(
                             states_res,
                             os.path.join(self.args.log_path, "ckpt_{}_res.pth".format(epoch)),
                         )
-                        torch.save(states_res, os.path.join(self.args.log_path, "ckpt_res.pth"))
+                        torch.save(
+                            states_res,
+                            os.path.join(self.args.log_path, "ckpt_res.pth"),
+                        )
+                        if self.config.model.ema:
+                            torch.save(ema_helper_res.state_dict(), os.path.join(self.args.log_path, 'res_{}_ema.pth'.format(epoch)))
+                            torch.save(ema_helper_res.state_dict(), os.path.join(self.args.log_path, 'res_ema.pth'))
 
                 data_start = time.time()
 

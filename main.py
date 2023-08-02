@@ -94,9 +94,10 @@ def parse_args_and_config():
     parser.add_argument("--sequence", action="store_true")
     parser.add_argument("--ckpt_id", type=int, default=500000, help="ckpt id")
     parser.add_argument("--num_samples", type=int, default=50000, help="Number of generated samples")
-    parser.add_argument("--train2steps", action="store_true", help="Whether to train 2 steps")
+    parser.add_argument("--use_resnet", action="store_true", help="Whether to use Residual network")
     parser.add_argument("--model_type", type=str, default="unet", help="unet or uvit",)
     parser.add_argument("--model_ema", action="store_true")
+    parser.add_argument("--gamma", type=float, default=1., help="gamma coef of mismatch loss")
 
     args = parser.parse_args()
     args.log_path = os.path.join(args.exp, "logs", args.doc)
