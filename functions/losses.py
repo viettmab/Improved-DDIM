@@ -129,14 +129,19 @@ def mismatch_loss(model, residual_connection_net,
         residual_val = residual_val_raw.expand(x0_pred.shape)
         x0_tilde = (1.0 - residual_val) * x0_pred + residual_val * x0
 
-    # Step t-1
+    # Perfect xt_1
     e_1 = torch.randn_like(e)
     at_bar_prev = extract_into_tensor(coef["alphas_cumprod_prev"],t)
-    xt_1_tilde= x0_tilde * torch.sqrt(at_bar_prev) + e_1 * torch.sqrt(1.0 - at_bar_prev)
+    xt_1= x0 * torch.sqrt(at_bar_prev) + e_1 * torch.sqrt(1.0 - at_bar_prev)
     t_prev = torch.clamp(t - 1.0, min=0)
-    eps_prediction_1 = model(xt_1_tilde, t_prev.float())
+    eps_prediction_1 = model(xt_1, t_prev.float())
     mse_1 = (e_1 - eps_prediction_1).square().sum(dim=(1, 2, 3)).mean(dim=0)
-    mse += gamma * mse_1
+
+    # Consistency loss
+    xt_1_tilde= x0_tilde * torch.sqrt(at_bar_prev) + e_1 * torch.sqrt(1.0 - at_bar_prev)
+    eps_prediction_1_tilde = model(xt_1_tilde, t_prev.float())
+    mse_2 = (eps_prediction_1_tilde - eps_prediction_1).square().sum(dim=(1, 2, 3)).mean(dim=0)
+    mse += mse_1 + mse_2
     return mse
 
 def get_residual_value(model, residual_connection_net,
