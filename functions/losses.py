@@ -119,15 +119,18 @@ def mismatch_loss(model, residual_connection_net,
     mse = (e - eps_prediction).square().sum(dim=(1, 2, 3)).mean(dim=0)
  
     # Interpolation
-    residual_val_raw = torch.tensor([-1]*xt.shape[0])
-    if residual_connection_net is not None:
-        residual_val_raw = residual_connection_net(
-            x0_pred, t
-        ).squeeze()
-        while len(residual_val_raw.shape) < len(x0_pred.shape):
-            residual_val_raw = residual_val_raw[..., None]
-        residual_val = residual_val_raw.expand(x0_pred.shape)
-        x0_tilde = (1.0 - residual_val) * x0_pred + residual_val * x0
+    # residual_val_raw = torch.tensor([-1]*xt.shape[0])
+    # if residual_connection_net is not None:
+    #     residual_val_raw = residual_connection_net(
+    #         x0_pred, t
+    #     ).squeeze()
+    #     while len(residual_val_raw.shape) < len(x0_pred.shape):
+    #         residual_val_raw = residual_val_raw[..., None]
+    #     residual_val = residual_val_raw.expand(x0_pred.shape)
+    #     x0_tilde = (1.0 - residual_val) * x0_pred + residual_val * x0
+    residual_val = torch.empty(x0_pred.shape, dtype=torch.float32, device=x0_pred.device)
+    residual_val.fill_(0.5)
+    x0_tilde = (1.0 - residual_val) * x0_pred + residual_val * x0
 
     # Perfect xt_1
     e_1 = torch.randn_like(e)
@@ -142,7 +145,7 @@ def mismatch_loss(model, residual_connection_net,
     eps_prediction_1_tilde = model(xt_1_tilde, t_prev.float())
     mse_2 = (eps_prediction_1_tilde - eps_prediction_1).square().sum(dim=(1, 2, 3)).mean(dim=0)
     mse += mse_1 + mse_2
-    return mse
+    return mse / 3
 
 def get_residual_value(model, residual_connection_net,
                     x0: torch.Tensor,
