@@ -146,7 +146,16 @@ def mismatch_loss(model, residual_connection_net,
     c2 = torch.sqrt(1 - at_bar_prev - sigma ** 2)
     xt_1_tilde = torch.sqrt(at_bar_prev) * x0_pred + c2 * eps_prediction + sigma * torch.randn_like(xt)
     eps_prediction_1_tilde = model(xt_1_tilde, t_prev.float())
-    eps_target_1_tilde = (xt_1_tilde-torch.sqrt(at_bar_prev)*x0)/torch.sqrt(1 - at_bar_prev)
+
+    # Define a small epsilon value to handle division by zero
+    z = 1e-5
+    numerator = xt_1_tilde-torch.sqrt(at_bar_prev)*x0
+    denominator = torch.sqrt(1 - at_bar_prev)
+    # Replace zeros in denominator with the epsilon value to avoid division by zero
+    denominator_safe = torch.where(denominator != 0, denominator, torch.tensor(z, dtype=torch.float32))
+    # Perform element-wise division
+    eps_target_1_tilde = torch.where(denominator != 0, numerator / denominator_safe, torch.tensor(0, dtype=torch.float32))
+    eps_prediction_1_tilde = torch.where(denominator != 0, eps_prediction_1_tilde, torch.tensor(0, dtype=torch.float32))
     mse_2 = (eps_prediction_1_tilde - eps_target_1_tilde).square().sum(dim=(1, 2, 3)).mean(dim=0)
     mse += mse_2
     return mse / 2
