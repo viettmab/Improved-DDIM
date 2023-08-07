@@ -132,33 +132,34 @@ def mismatch_loss(model, residual_connection_net,
     # residual_val.fill_(0.5)
     # x0_tilde = (1.0 - residual_val) * x0_pred + residual_val * x0
 
-    # Perfect xt_1
-    # e_1 = torch.randn_like(e)
     at_bar_prev = extract_into_tensor(coef["alphas_cumprod_prev"],t)
-    # xt_1= x0 * torch.sqrt(at_bar_prev) + e_1 * torch.sqrt(1.0 - at_bar_prev)
     t_prev = torch.clamp(t - 1.0, min=0)
-    # eps_prediction_1 = model(xt_1, t_prev.float())
-    # mse_1 = (e_1 - eps_prediction_1).square().sum(dim=(1, 2, 3)).mean(dim=0)
+    at = extract_into_tensor(1-b,t)
+    # Compute A_t
+    z = 1e-5 # Define a small epsilon value to handle division by zero
+    num = 1-at_bar
+    den = at - at_bar
+    # Replace zeros in denominator with the epsilon value to avoid division by zero
+    den_safe = torch.where(den != 0, den, torch.tensor(z, dtype=torch.float32))
+    # Perform element-wise division
+    A_t = torch.where(den != 0, torch.sqrt(num / den_safe), torch.tensor(0, dtype=torch.float32))
 
-    # Consistency loss
+    # Compute x_tilde
     eta = 1
     sigma = eta * torch.sqrt((1 - at_bar / at_bar_prev) * (1 - at_bar_prev) / (1 - at_bar))
     c2 = torch.sqrt(1 - at_bar_prev - sigma ** 2)
     xt_1_tilde = torch.sqrt(at_bar_prev) * x0_pred + c2 * eps_prediction + sigma * torch.randn_like(xt)
     eps_prediction_1_tilde = model(xt_1_tilde, t_prev.float())
 
-    # Define a small epsilon value to handle division by zero
-    z = 1e-5
     numerator = xt_1_tilde-torch.sqrt(at_bar_prev)*x0
     denominator = torch.sqrt(1 - at_bar_prev)
-    # Replace zeros in denominator with the epsilon value to avoid division by zero
     denominator_safe = torch.where(denominator != 0, denominator, torch.tensor(z, dtype=torch.float32))
-    # Perform element-wise division
     eps_target_1_tilde = torch.where(denominator != 0, numerator / denominator_safe, torch.tensor(0, dtype=torch.float32))
     eps_prediction_1_tilde = torch.where(denominator != 0, eps_prediction_1_tilde, torch.tensor(0, dtype=torch.float32))
-    mse_2 = (eps_prediction_1_tilde - eps_target_1_tilde).square().sum(dim=(1, 2, 3)).mean(dim=0)
-    mse += mse_2
-    return mse / 2
+
+    mse_2 = 1/2*(A_t*(e - eps_prediction)+(eps_target_1_tilde - eps_prediction_1_tilde)).square().sum(dim=(1, 2, 3)).mean(dim=0)
+    mse += mse_2 / 2
+    return mse
 
 def get_residual_value(model, residual_connection_net,
                     x0: torch.Tensor,
